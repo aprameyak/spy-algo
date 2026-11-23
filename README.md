@@ -2,6 +2,8 @@
 
 Backtesting code for intraday SPY strategies at 5 minute and 1 hour bars. It covers rule-based strategies, candle patterns, a small ML model, and a paper trading simulator.
 
+Start with `docs/findings.md` for everything tested and what it showed, `docs/approaches/` for one page per approach, `docs/diagnostics.md` and `docs/compression_study.md` for the follow-up studies, and `results/README.md` for the result files.
+
 ## Setup
 
 ```sh

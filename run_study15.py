@@ -1,24 +1,21 @@
-import itertools, sys
+import itertools, os, sys
 import numpy as np, pandas as pd
 import spyalgo as sa
 
 B = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
 rng = np.random.default_rng(5)
+PRE = os.environ.get("DATA_PREFIX", "A_")
 
 def load(tk):
-    raw = pd.read_csv(f"data/{tk}_15m.csv", index_col=0)
+    raw = pd.read_csv(f"data/{PRE}{tk}_15m.csv", index_col=0)
     raw.index = pd.to_datetime(raw.index, utc=True).tz_convert(sa.TZ)
     df, _ = sa.validate_and_clean(raw)
     f = sa.add_features(df, or_minutes=30)
-    if tk == "SPY":
-        f = sa.add_premarket(f, "data/SPY_15m_premarket.csv")
-    return f
+    return sa.add_premarket(f, f"data/{PRE}{tk}_15m_premarket.csv")
 
 FR = {tk: load(tk) for tk in ("SPY", "QQQ")}
 configs = []
 for tk, lv, vm, rr, sm, win in itertools.product(("SPY", "QQQ"), sa.LEVELS, (1.0, 0.0), (1.0, 1.5, 2.0), (1.5, 2.0, 2.5), (120, 300)):
-    if lv == "premarket" and tk != "SPY":
-        continue
     configs.append(dict(market=tk, family="levels", level=lv, vol_filter=vm > 0, rr=rr, stop=sm, window=win,
                         fn="levels", kw=dict(level=lv, vol_mult=vm, rr=rr, stop_mult=sm, last_entry=win)))
 for tk, fam, rr, win in itertools.product(("SPY", "QQQ"), ("vwap_pullback", "sweep", "trend_pullback", "inside_bar", "compression"),
@@ -71,3 +68,23 @@ for col in ("family", "level", "market", "vol_filter", "rr", "stop", "window"):
                            total=("total", "mean"), pos=("total", lambda x: (x > 0).mean()))
     print(f"\n{col}"); print(g.round(4).to_string())
 R.to_csv("results/study15m.csv", index=False)
+
+half = n // 2
+Din, Dout = D[:half], D[half:]
+ok = Din.std(0, ddof=1) > 0
+tin = np.where(ok, Din.mean(0) / np.where(ok, Din.std(0, ddof=1), 1) * np.sqrt(half), -np.inf)
+nout = n - half
+tout = Dout.mean(0) / np.where(Dout.std(0, ddof=1) > 0, Dout.std(0, ddof=1), np.nan) * np.sqrt(nout)
+print(f"\nCHRONOLOGICAL SPLIT: in-sample {half} days, out-of-sample {nout} days")
+print("rank-corr of in-sample t vs out-of-sample t over all configs:", round(float(pd.Series(tin[ok]).corr(pd.Series(tout[ok]), method="spearman")), 3))
+top = np.argsort(-tin)[:10]
+print("top 10 configs by in-sample t, evaluated out-of-sample:")
+out = R.iloc[top][["market", "family", "level", "rr", "stop", "window"]].copy()
+out["t_in"] = tin[top]
+out["t_out"] = tout[top]
+out["ret_in"] = [(1 + Din[:, j]).prod() - 1 for j in top]
+out["ret_out"] = [(1 + Dout[:, j]).prod() - 1 for j in top]
+print(out.round(3).to_string(index=False))
+sel = Dout[:, top].mean(1)
+bs = np.array([rng.choice(sel, nout).mean() for _ in range(5000)])
+print(f"out-of-sample mean daily return of the top-10 basket: {sel.mean()*1e4:.2f} bps/day, 95% CI [{np.percentile(bs,2.5)*1e4:.2f}, {np.percentile(bs,97.5)*1e4:.2f}]")

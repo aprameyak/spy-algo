@@ -34,6 +34,11 @@ python -m venv .venv
 - `effects_scan.py`: scan of simple effects such as gap, VWAP deviation and first-hour momentum
 - `paper_trade.py`: simulated broker for replay and live paper runs
 - `run_retest.py`, `run_strategies15.py`, `run_levels15.py`, `run_grid15.py`, `run_top5.py`, `run_study15.py`: 15m studies of the opening-range, retest, sweep, pullback, VWAP and compression strategies
+- `fetch_alpaca.py`: 5 years of SPY and QQQ 15m and 5m bars from Alpaca (needs `ALPACA_KEY_ID` and `ALPACA_SECRET` in `.env`)
+- `strategies_extra.py`: gap, late-day momentum, RSI reversion, EMA trend, failed breakout and premarket-gap strategies
+- `run_all.py`: every approach with frozen settings, development (2021 to 2023) versus test (2024 on), bootstrap intervals and a reality check
+- `make_docs.py`: writes one page per approach to `docs/approaches/`
+- `test_nolookahead.py`: checks no strategy's signals change when future bars are removed
 - `test_spyalgo.py`: tests
 
 ## 15m strategies
@@ -73,3 +78,11 @@ None of it held up out of sample.
 - Long-only intraday SPY loses to buy and hold because most of the return comes overnight.
 
 One bug worth noting: a lookahead in the prior-day feature produced t = 25. The size gave it away and it was fixed with `shift(1)`.
+
+## Five-year results (15m, SPY and QQQ, 2021 to 2026)
+
+Settings were not tuned on this data and each approach was run on a development period (before 2024) and a test period (2024 onward). The last three months of the test period were also seen during earlier exploration on 60 days of data. See `docs/approaches/` for one page per approach.
+
+- Development period: late-day momentum (t = 4.1 on QQQ, reality-check p = 0.002), EMA trend and opening range breakout looked good.
+- Test period: all three lost their edge (late momentum t = -1.4, EMA trend negative, opening range breakout flat). The best test result was the inside-bar breakout on 9 to 21 trades, reality-check p = 0.68.
+- No approach was positive with t > 2 in both periods after allowing for the number tried.

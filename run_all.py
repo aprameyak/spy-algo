@@ -7,30 +7,7 @@ B = 5000
 SPLIT = pd.Timestamp("2024-01-01")
 rng = np.random.default_rng(11)
 
-CONFIGS = {
-    "orb": dict(stop_frac=0.5, rr=2.0, use_trend=False, entry_cutoff=300),
-    "drive": dict(),
-    "retest": dict(last_entry=120),
-    "levels_first15": dict(level="first15", last_entry=120),
-    "levels_first30": dict(level="first30", last_entry=120),
-    "levels_body": dict(level="body", last_entry=120),
-    "levels_mid": dict(level="mid", last_entry=120),
-    "levels_prevday": dict(level="prevday", last_entry=120),
-    "levels_premarket": dict(level="premarket", last_entry=120),
-    "vwap_pullback": dict(last_entry=120),
-    "vwap_revert": dict(last_entry=300),
-    "sweep": dict(last_entry=120),
-    "trend_pullback": dict(last_entry=120),
-    "inside_bar": dict(last_entry=120),
-    "compression": dict(last_entry=300),
-    "gap_go": dict(),
-    "gap_fade": dict(),
-    "late_momentum": dict(),
-    "rsi_revert": dict(),
-    "ema_trend": dict(),
-    "failed_breakout": dict(),
-    "premarket_gap": dict(),
-}
+from configs import CONFIGS
 
 
 def load(tk):

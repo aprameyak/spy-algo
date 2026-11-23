@@ -33,7 +33,22 @@ python -m venv .venv
 - `multi_study.py`, `multi_study_lib.py`: patterns found on ten ETFs, then checked on SPY
 - `effects_scan.py`: scan of simple effects such as gap, VWAP deviation and first-hour momentum
 - `paper_trade.py`: simulated broker for replay and live paper runs
+- `run_retest.py`, `run_strategies15.py`, `run_levels15.py`, `run_grid15.py`, `run_top5.py`: 15m studies of the opening-range, retest, sweep, pullback, VWAP and compression strategies
 - `test_spyalgo.py`: tests
+
+## 15m strategies
+
+All in `spyalgo.py`, registered in `STRATEGIES`. Entries are limited to a window (default 10:00 to 11:30 ET, one trade per day), signals fire on a closed bar and fill at the next open.
+
+- `retest`: opening-range breakout, then a confirmed retest in the opening-volume bias direction. Stop is 2x the distance to the broken level, target is 2x the stop.
+- `levels`: the same breakout and retest on other levels: first 15m candle, first 30m range, opening candle body, opening candle midpoint, previous-day high/low, premarket high/low.
+- `vwap_pullback`, `vwap_revert`: pullback to VWAP in the bias direction, and fade of a stretch from VWAP with VWAP as the target.
+- `sweep`: previous-day high/low sweep and reversal.
+- `trend_pullback`: strong opening move, small consolidation, entry on the break.
+- `inside_bar`: inside bar then breakout and retest in the bias direction.
+- `compression`: narrow multi-bar box, entry on the close beyond it.
+
+Only about 60 days of 15m bars are available from Yahoo (2026-08-28 to 2026-11-20, SPY down 10%), so these runs have between 1 and 40 trades each. Nothing here is significant after allowing for the number of variants tried. `premarket` needs `data/SPY_15m_premarket.csv`, fetched with `prepost=True`.
 
 ## Backtest rules
 

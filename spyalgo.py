@@ -136,7 +136,272 @@ def signals_ml(f: pd.DataFrame, long_thr=0.55, short_thr=0.45, hold=1, stop_frac
                          "hold": hold}, index=f.index)
 
 
-STRATEGIES = {"orb": signals_orb, "drive": signals_drive, "ml": signals_ml}
+def _bias(day: pd.DataFrame, typical: pd.Series, open_bars: int, vol_mult: float) -> int:
+    op = day.iloc[:open_bars]
+    hv = op.Volume >= vol_mult * typical.loc[op.index]
+    if not hv.any():
+        return 0
+    return int(np.sign((op.Close - op.Open)[hv].sum()))
+
+
+def _typical_volume(f: pd.DataFrame, lookback: int) -> pd.Series:
+    return f.groupby(f.index.time).Volume.transform(
+        lambda v: v.shift(1).rolling(lookback, min_periods=lookback // 2).median())
+
+
+def _break_retest(day: pd.DataFrame, start: int, level: float, bias: int, last_entry: int, first_min: int = 0):
+    broke = False
+    for k in range(start, len(day)):
+        row = day.iloc[k]
+        if row.end_min > last_entry:
+            return None
+        beyond = row.Close > level if bias > 0 else row.Close < level
+        if not broke:
+            broke = beyond
+            continue
+        if not beyond:
+            return None
+        touched = row.Low <= level if bias > 0 else row.High >= level
+        if touched and row.mins >= first_min:
+            return k
+    return None
+
+
+def _emit(f, jobs, rr, min_stop_frac):
+    side = np.zeros(len(f), int)
+    stop_d = np.zeros(len(f))
+    for i, sd, sgn in jobs:
+        side[i] = sgn
+        stop_d[i] = max(sd, min_stop_frac * f.Close.iloc[i])
+    return pd.DataFrame({"side": side, "stop_d": stop_d, "tgt_d": rr * stop_d}, index=f.index)
+
+
+def _days(f):
+    dates = f["date"].to_numpy()
+    for d in f["date"].unique():
+        ix = np.flatnonzero(dates == d)
+        day = f.iloc[ix]
+        if not day.early_close.iloc[0]:
+            yield ix, day
+
+
+def signals_retest(f: pd.DataFrame, open_bars=2, vol_lookback=20, vol_mult=1.0, last_entry=120,
+                   stop_mult=2.0, rr=2.0, min_stop_frac=0.0002, **_) -> pd.DataFrame:
+    typ = _typical_volume(f, vol_lookback)
+    jobs = []
+    for ix, day in _days(f):
+        if len(day) <= open_bars:
+            continue
+        bias = _bias(day, typ, open_bars, vol_mult)
+        if not bias:
+            continue
+        level = day.or_high.iloc[0] if bias > 0 else day.or_low.iloc[0]
+        k = _break_retest(day, open_bars, level, bias, last_entry)
+        if k is not None:
+            jobs.append((ix[k], stop_mult * abs(day.Close.iloc[k] - level), bias))
+    return _emit(f, jobs, rr, min_stop_frac)
+
+
+def signals_vwap_pullback(f: pd.DataFrame, open_bars=2, vol_lookback=20, vol_mult=1.0, last_entry=120,
+                          touch=0.0005, rr=2.0, min_stop_frac=0.0002, **_) -> pd.DataFrame:
+    typ = _typical_volume(f, vol_lookback)
+    jobs = []
+    for ix, day in _days(f):
+        bias = _bias(day, typ, open_bars, vol_mult)
+        if not bias:
+            continue
+        for k in range(open_bars, len(day)):
+            r = day.iloc[k]
+            if r.end_min > last_entry:
+                break
+            if bias > 0 and r.Low <= r.vwap * (1 + touch) and r.Close > r.Open and r.Close > r.vwap:
+                jobs.append((ix[k], r.Close - r.Low, 1))
+                break
+            if bias < 0 and r.High >= r.vwap * (1 - touch) and r.Close < r.Open and r.Close < r.vwap:
+                jobs.append((ix[k], r.High - r.Close, -1))
+                break
+    return _emit(f, jobs, rr, min_stop_frac)
+
+
+def signals_sweep(f: pd.DataFrame, last_entry=120, rr=2.0, min_stop_frac=0.0002, **_) -> pd.DataFrame:
+    dd = f.groupby("date").agg(h=("High", "max"), l=("Low", "min"))
+    ph, pl = dd.h.shift(1), dd.l.shift(1)
+    jobs = []
+    for ix, day in _days(f):
+        h, l = ph.loc[day["date"].iloc[0]], pl.loc[day["date"].iloc[0]]
+        if np.isnan(h):
+            continue
+        for k in range(1, len(day)):
+            r, p = day.iloc[k], day.iloc[k - 1]
+            if r.end_min > last_entry:
+                break
+            if p.High > h and p.Close < h and r.Close < r.Open and r.Close < h:
+                jobs.append((ix[k], max(p.High, r.High) - r.Close, -1))
+                break
+            if p.Low < l and p.Close > l and r.Close > r.Open and r.Close > l:
+                jobs.append((ix[k], r.Close - min(p.Low, r.Low), 1))
+                break
+    return _emit(f, jobs, rr, min_stop_frac)
+
+
+def signals_trend_pullback(f: pd.DataFrame, open_bars=2, thr=0.2, consol_bars=3, consol_frac=0.25,
+                           last_entry=120, rr=2.0, min_stop_frac=0.0002, **_) -> pd.DataFrame:
+    jobs = []
+    for ix, day in _days(f):
+        a = day.atr_prev.iloc[0]
+        if np.isnan(a) or len(day) <= open_bars + consol_bars:
+            continue
+        move = day.or_ret.iloc[0]
+        if abs(move) < thr * a / day.prev_close.iloc[0]:
+            continue
+        sgn = 1 if move > 0 else -1
+        for k in range(open_bars + consol_bars, len(day)):
+            r = day.iloc[k]
+            if r.end_min > last_entry:
+                break
+            w = day.iloc[k - consol_bars:k]
+            hi, lo = w.High.max(), w.Low.min()
+            if hi - lo > consol_frac * a:
+                continue
+            if sgn > 0 and r.Close > hi:
+                jobs.append((ix[k], r.Close - lo, 1))
+                break
+            if sgn < 0 and r.Close < lo:
+                jobs.append((ix[k], hi - r.Close, -1))
+                break
+    return _emit(f, jobs, rr, min_stop_frac)
+
+
+def signals_inside_bar(f: pd.DataFrame, open_bars=2, vol_lookback=20, vol_mult=1.0, last_entry=120,
+                       rr=2.0, min_stop_frac=0.0002, **_) -> pd.DataFrame:
+    typ = _typical_volume(f, vol_lookback)
+    jobs = []
+    for ix, day in _days(f):
+        bias = _bias(day, typ, open_bars, vol_mult)
+        if not bias:
+            continue
+        for j in range(open_bars + 1, len(day)):
+            m, b = day.iloc[j - 1], day.iloc[j]
+            if b.end_min > last_entry:
+                break
+            if b.High <= m.High and b.Low >= m.Low:
+                level = m.High if bias > 0 else m.Low
+                k = _break_retest(day, j + 1, level, bias, last_entry)
+                if k is not None:
+                    c = day.Close.iloc[k]
+                    jobs.append((ix[k], (c - m.Low) if bias > 0 else (m.High - c), bias))
+                break
+    return _emit(f, jobs, rr, min_stop_frac)
+
+
+def add_premarket(f: pd.DataFrame, path: str) -> pd.DataFrame:
+    pm = pd.read_csv(path, index_col=0)
+    pm.index = pd.to_datetime(pm.index, utc=True).tz_convert(TZ)
+    g = pm.groupby(pm.index.normalize())
+    out = f.copy()
+    out["pm_high"] = out["date"].map(g.High.max())
+    out["pm_low"] = out["date"].map(g.Low.min())
+    return out
+
+
+LEVELS = ("first15", "first30", "body", "mid", "prevday", "premarket")
+
+
+def signals_levels(f: pd.DataFrame, level: str = "first30", range_min=None, bias_min=30, entry_after=30,
+                   vol_lookback=20, vol_mult=1.0, last_entry=120, stop_mult=2.0, rr=2.0,
+                   min_stop_frac=0.0002, **_) -> pd.DataFrame:
+    if level not in LEVELS:
+        raise ValueError(level)
+    bm = bar_minutes(f)
+    rng_min = range_min or {"first15": 15, "first30": 30, "body": 15, "mid": 15}.get(level, 0)
+    nr = rng_min // bm
+    nb = (rng_min if level in ("first15", "first30", "body", "mid") else bias_min) // bm
+    typ = _typical_volume(f, vol_lookback)
+    dd = f.groupby("date").agg(h=("High", "max"), l=("Low", "min"))
+    ph, pl = dd.h.shift(1), dd.l.shift(1)
+    jobs = []
+    for ix, day in _days(f):
+        if len(day) <= max(nb, nr):
+            continue
+        bias = _bias(day, typ, nb, vol_mult)
+        if not bias:
+            continue
+        d = day["date"].iloc[0]
+        if nr:
+            o, c = day.Open.iloc[0], day.Close.iloc[nr - 1]
+            hi, lo = day.High.iloc[:nr].max(), day.Low.iloc[:nr].min()
+        if level in ("first15", "first30"):
+            lv = hi if bias > 0 else lo
+        elif level == "body":
+            lv = max(o, c) if bias > 0 else min(o, c)
+        elif level == "mid":
+            lv = (hi + lo) / 2
+        elif level == "prevday":
+            lv = ph.loc[d] if bias > 0 else pl.loc[d]
+        else:
+            lv = day.pm_high.iloc[0] if bias > 0 else day.pm_low.iloc[0]
+        if np.isnan(lv):
+            continue
+        k = _break_retest(day, nr, lv, bias, last_entry, first_min=entry_after)
+        if k is not None:
+            jobs.append((ix[k], stop_mult * abs(day.Close.iloc[k] - lv), bias))
+    return _emit(f, jobs, rr, min_stop_frac)
+
+
+def signals_vwap_revert(f: pd.DataFrame, stretch=0.25, last_entry=300, min_stop_frac=0.0002, **_) -> pd.DataFrame:
+    side = np.zeros(len(f), int)
+    stop_d = np.zeros(len(f))
+    tgt_d = np.zeros(len(f))
+    for ix, day in _days(f):
+        a = day.atr_prev.iloc[0]
+        if np.isnan(a):
+            continue
+        for k in range(1, len(day)):
+            r = day.iloc[k]
+            if r.end_min > last_entry:
+                break
+            gap = r.Close - r.vwap
+            if gap <= -stretch * a and r.Close > r.Open:
+                sd, td, sg = r.Close - r.Low, -gap, 1
+            elif gap >= stretch * a and r.Close < r.Open:
+                sd, td, sg = r.High - r.Close, gap, -1
+            else:
+                continue
+            i = ix[k]
+            side[i], stop_d[i], tgt_d[i] = sg, max(sd, min_stop_frac * r.Close), td
+            break
+    return pd.DataFrame({"side": side, "stop_d": stop_d, "tgt_d": tgt_d}, index=f.index)
+
+
+def signals_compression(f: pd.DataFrame, box_bars=4, box_frac=0.3, last_entry=300, rr=2.0,
+                        min_stop_frac=0.0002, **_) -> pd.DataFrame:
+    jobs = []
+    for ix, day in _days(f):
+        a = day.atr_prev.iloc[0]
+        if np.isnan(a):
+            continue
+        for k in range(max(box_bars, 2), len(day)):
+            r = day.iloc[k]
+            if r.end_min > last_entry:
+                break
+            w = day.iloc[k - box_bars:k]
+            hi, lo = w.High.max(), w.Low.min()
+            if hi - lo > box_frac * a:
+                continue
+            if r.Close > hi:
+                jobs.append((ix[k], r.Close - lo, 1))
+                break
+            if r.Close < lo:
+                jobs.append((ix[k], hi - r.Close, -1))
+                break
+    return _emit(f, jobs, rr, min_stop_frac)
+
+
+STRATEGIES = {"orb": signals_orb, "drive": signals_drive, "ml": signals_ml, "retest": signals_retest,
+              "vwap_pullback": signals_vwap_pullback, "sweep": signals_sweep,
+              "trend_pullback": signals_trend_pullback, "inside_bar": signals_inside_bar,
+              "vwap_revert": signals_vwap_revert, "compression": signals_compression,
+              "levels": signals_levels}
 
 
 @dataclass

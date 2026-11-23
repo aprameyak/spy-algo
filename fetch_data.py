@@ -1,7 +1,7 @@
 import yfinance as yf, pandas as pd, sys
 
-def fetch(interval, period):
-    df = yf.Ticker("SPY").history(period=period, interval=interval, auto_adjust=False, prepost=False)
+def fetch(interval, period, ticker="SPY"):
+    df = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False, prepost=False)
     df.index = df.index.tz_convert("America/New_York")
     df = df[["Open","High","Low","Close","Volume"]]
     t = df.index.time

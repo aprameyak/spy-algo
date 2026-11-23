@@ -1,0 +1,48 @@
+{
+  "name": "compression_v1",
+  "frozen_on": "2026-11-23",
+  "code_commit": "9e5c267839eec9415e13a17473126d2417e9a05f",
+  "forward_start_after": "2026-11-20",
+  "strategy": {
+    "function": "spyalgo.signals_compression",
+    "box_bars": 4,
+    "box_frac": 0.3,
+    "last_entry_end_min": 300,
+    "rr": 2.0,
+    "min_stop_frac": 0.0002,
+    "rule": "A box is the high and low of the previous four completed 15m bars. If the box is at most 0.3 x prior-day ATR wide, enter on the first bar that closes beyond it, in that direction, fill at the next bar open. Stop is the distance to the opposite side of the box (at least 0.02% of price), target is 2x the stop. One trade per day, flat at the close, entries through 2:30 PM ET."
+  },
+  "data": {
+    "source": "Alpaca consolidated (sip) feed",
+    "bar": "15Min",
+    "adjustment": "raw",
+    "regular_hours": "09:30 to 16:00 ET",
+    "markets": ["SPY", "QQQ"],
+    "cleaning": "spyalgo.validate_and_clean drops incomplete days",
+    "features": "spyalgo.add_features(or_minutes=30)"
+  },
+  "execution": {
+    "slippage_per_side": 0.01,
+    "sec_fee_rate": 2.78e-05,
+    "taf_per_share": 0.000166,
+    "taf_cap": 8.3,
+    "risk_per_trade": 0.005,
+    "max_leverage": 1.0,
+    "daily_loss_limit": 0.02,
+    "max_trades_per_day": 1,
+    "stop_first_when_both_hit": true
+  },
+  "evaluation": {
+    "block_bootstrap_days": 10,
+    "scenarios": ["zero", "realistic", "stressed (3 cents per side)", "delay one bar"],
+    "pre_registered_requirements": [
+      "mean return per trade above zero after realistic costs",
+      "outperforms matched random entries",
+      "block-bootstrap 95% interval for mean daily return excludes zero",
+      "positive in every independent forward period",
+      "still positive with stressed costs and a one-bar delay",
+      "acceptable drawdown and worst trade"
+    ],
+    "minimum_forward_days_before_judging": 250
+  }
+}

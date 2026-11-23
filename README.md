@@ -33,7 +33,7 @@ python -m venv .venv
 - `multi_study.py`, `multi_study_lib.py`: patterns found on ten ETFs, then checked on SPY
 - `effects_scan.py`: scan of simple effects such as gap, VWAP deviation and first-hour momentum
 - `paper_trade.py`: simulated broker for replay and live paper runs
-- `run_retest.py`, `run_strategies15.py`, `run_levels15.py`, `run_grid15.py`, `run_top5.py`: 15m studies of the opening-range, retest, sweep, pullback, VWAP and compression strategies
+- `run_retest.py`, `run_strategies15.py`, `run_levels15.py`, `run_grid15.py`, `run_top5.py`, `run_study15.py`: 15m studies of the opening-range, retest, sweep, pullback, VWAP and compression strategies
 - `test_spyalgo.py`: tests
 
 ## 15m strategies
